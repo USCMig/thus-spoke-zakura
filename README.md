@@ -121,6 +121,10 @@ Running `ths` with no command starts the default environment.
 | `ths mine 10` | Mine blocks on the running environment and synchronize its wallet |
 | `ths faucet <ADDRESS>` | Send 1 disposable ZEC to a Regtest unified or transparent address |
 | `ths faucet <ADDRESS> --amount 2.5` | Send a custom amount of up to 5 disposable ZEC |
+| `ths deploy faucet --accounts 1,2,3 --amount 3` | Fund development accounts by index instead of address |
+| `ths deploy send --from 1 --to 2 --amount 1` | Move funds between development accounts by index |
+| `ths deploy shield --from 1 --amount 0.5` | Move an account's transparent balance into its Orchard balance |
+| `ths deploy unshield --from 1 --amount 0.2` | Move an account's Orchard balance into its transparent balance |
 | `ths logs app -f` | Follow dashboard/server logs |
 | `ths logs zakura -f` | Follow node logs |
 | `ths logs lightwalletd -f` | Follow lightwalletd logs |
@@ -132,6 +136,9 @@ Running `ths` with no command starts the default environment.
 | `ths update --check` | Check for a newer release |
 | `ths update` | Install the latest verified release |
 | `ths uninstall` | Remove the installed launcher executable |
+
+See [docs/cli.md](docs/cli.md) for the full command reference, including every
+`ths deploy` option and more examples.
 
 Every command accepts `--name` for isolated environments:
 
