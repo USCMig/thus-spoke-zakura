@@ -41,8 +41,10 @@ export const MEMO_MAX_BYTES = 512;
 
 export const memoByteLength = (memo: string) => new TextEncoder().encode(memo).length;
 
+// A disabled textarea can surface as undefined; treat that as "no memo".
 const memoField = z
   .string()
+  .default('')
   .refine(
     (memo) => memoByteLength(memo) <= MEMO_MAX_BYTES,
     `Memos are limited to ${MEMO_MAX_BYTES} bytes.`,

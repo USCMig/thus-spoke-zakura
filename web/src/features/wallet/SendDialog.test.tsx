@@ -118,6 +118,31 @@ describe('SendDialog', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('disables and clears the memo when the destination is transparent', async () => {
+    // Radix Select relies on pointer-capture and scrolling APIs jsdom lacks.
+    Object.assign(Element.prototype, {
+      hasPointerCapture: () => false,
+      releasePointerCapture: () => undefined,
+      scrollIntoView: () => undefined,
+    });
+
+    renderWithProviders(<SendDialog open onOpenChange={vi.fn()} accounts={testAccounts} />);
+    const memo = screen.getByLabelText('Memo (optional)');
+    expect(memo).toBeEnabled();
+    await userEvent.type(memo, 'orchard only');
+
+    await userEvent.click(screen.getByLabelText('Destination pool'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Transparent (public)' }));
+
+    expect(memo).toBeDisabled();
+    expect(memo).toHaveValue('');
+    expect(screen.getByText(/only available for orchard destinations/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Send ZEC/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(body(fetchMock)).not.toHaveProperty('memo');
+  });
+
   it('refuses a zero amount without calling the API', async () => {
     await submitAmount('0');
     expect(await screen.findByRole('alert')).toHaveTextContent('greater than zero');

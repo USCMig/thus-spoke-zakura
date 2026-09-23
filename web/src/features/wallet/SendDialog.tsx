@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useEffect } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { ArrowRight } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
@@ -16,6 +17,7 @@ import {
   type SendValues,
 } from './schemas';
 import { controlStyles } from '@/components/ui/control-styles';
+import { cn } from '@/lib/cn';
 import { SelectField } from './fields';
 import { POOL_OPTIONS, accountOptions } from './field-options';
 
@@ -49,7 +51,18 @@ export function SendDialog({
   const fromAccount = useWatch({ control: form.control, name: 'from_account' });
   const sourcePool = useWatch({ control: form.control, name: 'source_pool' });
   const destinationPool = useWatch({ control: form.control, name: 'destination_pool' });
-  const memo = useWatch({ control: form.control, name: 'memo' });
+  const memo = useWatch({ control: form.control, name: 'memo' }) ?? '';
+  const memoEnabled = destinationPool === 'orchard';
+
+  // A memo typed for an orchard output must not linger (hidden) once the
+  // destination switches to transparent, where it can never be sent.
+  useEffect(() => {
+    if (!memoEnabled) {
+      form.setValue('memo', '');
+      form.clearErrors('memo');
+    }
+  }, [memoEnabled, form]);
+
   const source = accounts.find((account) => account.id === Number(fromAccount));
   const available =
     source === undefined
@@ -150,9 +163,9 @@ export function SendDialog({
         <Field
           label="Memo (optional)"
           hint={
-            destinationPool === 'orchard'
+            memoEnabled
               ? `${memoByteLength(memo)}/${MEMO_MAX_BYTES} bytes, encrypted to the recipient.`
-              : 'Transparent outputs cannot carry a memo.'
+              : 'Memos are only available for orchard destinations.'
           }
           error={form.formState.errors.memo?.message}
         >
@@ -160,9 +173,11 @@ export function SendDialog({
             <textarea
               {...aria}
               {...form.register('memo')}
+              disabled={!memoEnabled}
+              placeholder={memoEnabled ? 'Add a private note for the recipient' : undefined}
               rows={2}
               autoComplete="off"
-              className={controlStyles}
+              className={cn(controlStyles, 'disabled:cursor-not-allowed disabled:opacity-50')}
             />
           )}
         </Field>
