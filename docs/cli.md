@@ -158,11 +158,12 @@ ths mine 10 --json
 
 ## Moving funds
 
-There are two ways to move funds: the single-purpose `ths faucet <ADDRESS>`
-command (send to an arbitrary Regtest address, no environment accounts
-required), and the account-index-based `ths deploy ...` commands below, which
-are built for scripting against the five development accounts without
-clicking through the dashboard UI.
+- `ths faucet <ADDRESS>` spends from the treasury to any Regtest address. It
+  does not move funds between accounts and takes no memo.
+- `ths send` moves funds from one development account to another, by index,
+  with an optional memo. It does the same thing as the dashboard's **Send ZEC**
+  dialog and uses the same endpoint (`POST /api/v1/send`).
+- `ths deploy ...` scripts common setups across the five accounts.
 
 ### `ths faucet <ADDRESS> [--amount <ZEC>]`
 
@@ -174,6 +175,56 @@ ZEC per request; defaults to 1 ZEC.
 ths faucet uregtest1exampleaddress...
 ths faucet tmExampleTransparentAddress... --amount 2.5
 ```
+
+### `ths send --from <N> --to <N> --amount <ZEC> [--source-pool <POOL>] [--destination-pool <POOL>] [--memo <TEXT>]`
+
+Sends funds from one development account to another. The transaction is mined
+immediately, and `ths` prints the transaction ID and confirming block.
+
+- `--from <N>` / `--to <N>` (required): account indices, `1`-`5`. The treasury
+  account can't be used.
+- `--amount <ZEC>` (required): limited only by the sending account's balance.
+- `--source-pool <orchard|transparent>`: pool to spend from (default
+  `orchard`).
+- `--destination-pool <orchard|transparent>`: pool the destination account
+  receives into (default `orchard`).
+- `--memo <TEXT>`: optional memo for the recipient. See [Memos](#memos).
+
+```console
+# Move 1 ZEC from account 2's Orchard balance to account 3's Orchard balance
+ths send --from 2 --to 3 --amount 1
+
+# Spend account 1's transparent balance into account 4's Orchard balance
+ths send --from 1 --to 4 --amount 0.5 --source-pool transparent
+
+# Attach a memo for the recipient
+ths send --from 2 --to 3 --amount 1 --memo "rent for October"
+
+# Rejected: transparent outputs cannot carry a memo
+ths send --from 2 --to 3 --amount 1 --destination-pool transparent --memo "hi"
+```
+
+#### Memos
+
+Zcash lets the sender attach a memo of up to 512 bytes to an Orchard output
+(ZIP 302). The memo is encrypted to the recipient. Only holders of that
+account's keys can read it.
+
+- A memo is only allowed when the destination pool is `orchard`. With a
+  `transparent` destination, `ths`, the dashboard, and the API all reject it.
+  Transparent outputs have no memo field, and none is invented.
+- `ths send`, `ths deploy send`, `ths deploy shield`, and the dashboard's
+  **Send ZEC** dialog accept a memo. `ths faucet`, `ths deploy faucet`, and
+  `ths deploy unshield` do not.
+- The limit is 512 **bytes**, not characters. Non-ASCII text, such as emoji or
+  CJK characters, takes several bytes per character.
+- The memo is attached to the recipient's output only. Change returned to the
+  sender has no memo.
+- The block explorer shows public transaction data only. It never shows memo
+  plaintext.
+- All five accounts and the treasury come from one seed as separate ZIP-32
+  accounts. A viewing-only wallet imported with one account's viewing key can
+  decrypt only the memos sent to that account.
 
 ## `ths deploy` — scripting the development accounts
 
@@ -214,28 +265,17 @@ shortfall) the command still funds the rest, prints a `Failed to fund ...`
 line per failure, and exits with a non-zero status summarizing how many of the
 requests failed.
 
-### `ths deploy send --from <N> --to <N> --amount <ZEC> [--source-pool <POOL>] [--destination-pool <POOL>]`
+### `ths deploy send ...`
 
-Sends funds from one development account to another (or to itself, moving
-between pools — see `shield`/`unshield` below for the common shortcuts).
-
-- `--from <N>` / `--to <N>` (required) — account indices, `1`-`5`.
-- `--amount <ZEC>` (required) — no upper limit beyond the sending account's
-  balance.
-- `--source-pool <orchard|transparent>` — pool to spend from (default
-  `orchard`).
-- `--destination-pool <orchard|transparent>` — pool the destination account
-  receives into (default `orchard`).
+Takes the same options as `ths send` (see [Moving funds](#moving-funds)) and
+does exactly the same thing. It's included so a setup script can use
+`deploy` for every step.
 
 ```console
-# Move 1 ZEC from account 2's shielded balance to account 3's shielded balance
-ths deploy send --from 2 --to 3 --amount 1
-
-# Send from account 1's transparent balance into account 4's shielded balance
-ths deploy send --from 1 --to 4 --amount 0.5 --source-pool transparent --destination-pool orchard
+ths deploy send --from 2 --to 3 --amount 1 --memo "rent for October"
 ```
 
-### `ths deploy shield --from <N> [--to <N>] --amount <ZEC>`
+### `ths deploy shield --from <N> [--to <N>] --amount <ZEC> [--memo <TEXT>]`
 
 Shorthand for `deploy send` with `--source-pool transparent
 --destination-pool orchard`: moves an account's unshielded (transparent)
@@ -244,13 +284,14 @@ balance into its shielded (Orchard) balance.
 - `--from <N>` (required) — account to shield from.
 - `--to <N>` — account to shield into (default: same as `--from`).
 - `--amount <ZEC>` (required).
+- `--memo <TEXT>` — optional memo on the shielded output (up to 512 bytes).
 
 ```console
 # Shield 0.5 ZEC of account 4's transparent balance into its own Orchard balance
 ths deploy shield --from 4 --amount 0.5
 
-# Shield into a different account's Orchard balance
-ths deploy shield --from 4 --to 2 --amount 0.5
+# Shield into a different account's Orchard balance, with a memo
+ths deploy shield --from 4 --to 2 --amount 0.5 --memo "welcome to the shielded pool"
 ```
 
 > Note: because transparent notes must be fully spent, the wallet may route
@@ -309,9 +350,10 @@ without opening the dashboard.
 | `ths endpoints [--json]` | Print endpoints for scripts and developer tools |
 | `ths mine <N>` | Mine blocks and synchronize the wallet |
 | `ths faucet <ADDRESS> [--amount]` | Send disposable ZEC to any Regtest address |
+| `ths send --from --to --amount [--source-pool] [--destination-pool] [--memo]` | Send between accounts by index, optionally with an Orchard memo |
 | `ths deploy faucet --accounts <LIST> [--amount] [--pool]` | Fund one or more of the five accounts by index |
-| `ths deploy send --from --to --amount [--source-pool] [--destination-pool]` | Move funds between accounts/pools by index |
-| `ths deploy shield --from [--to] --amount` | Move transparent balance into Orchard |
+| `ths deploy send --from --to --amount [--source-pool] [--destination-pool] [--memo]` | Move funds between accounts/pools by index, optionally with a memo |
+| `ths deploy shield --from [--to] --amount [--memo]` | Move transparent balance into Orchard |
 | `ths deploy unshield --from [--to] --amount` | Move Orchard balance into transparent |
 | `ths logs [service] [-f]` | Stream or print service logs |
 | `ths list` | List known environments |

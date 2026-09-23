@@ -8,7 +8,13 @@ import { useToast } from '@/components/ui/toast-context';
 import { errorMessage, type Account } from '@/lib/api';
 import { formatZecAmount } from '@/lib/money';
 import { useSend } from '@/hooks/mutations';
-import { sendSchema, type SendInput, type SendValues } from './schemas';
+import {
+  MEMO_MAX_BYTES,
+  memoByteLength,
+  sendSchema,
+  type SendInput,
+  type SendValues,
+} from './schemas';
 import { controlStyles } from '@/components/ui/control-styles';
 import { SelectField } from './fields';
 import { POOL_OPTIONS, accountOptions } from './field-options';
@@ -36,11 +42,14 @@ export function SendDialog({
       source_pool: 'orchard',
       destination_pool: 'orchard',
       amount: '1',
+      memo: '',
     },
   });
 
   const fromAccount = useWatch({ control: form.control, name: 'from_account' });
   const sourcePool = useWatch({ control: form.control, name: 'source_pool' });
+  const destinationPool = useWatch({ control: form.control, name: 'destination_pool' });
+  const memo = useWatch({ control: form.control, name: 'memo' });
   const source = accounts.find((account) => account.id === Number(fromAccount));
   const available =
     source === undefined
@@ -64,6 +73,7 @@ export function SendDialog({
         source_pool: values.source_pool,
         destination_pool: values.destination_pool,
         amount_zatoshi: values.amount,
+        ...(values.memo === '' ? {} : { memo: values.memo }),
       },
       {
         onSuccess: (activity) => {
@@ -131,6 +141,26 @@ export function SendDialog({
               {...aria}
               {...form.register('amount')}
               inputMode="decimal"
+              autoComplete="off"
+              className={controlStyles}
+            />
+          )}
+        </Field>
+
+        <Field
+          label="Memo (optional)"
+          hint={
+            destinationPool === 'orchard'
+              ? `${memoByteLength(memo)}/${MEMO_MAX_BYTES} bytes, encrypted to the recipient.`
+              : 'Transparent outputs cannot carry a memo.'
+          }
+          error={form.formState.errors.memo?.message}
+        >
+          {(aria) => (
+            <textarea
+              {...aria}
+              {...form.register('memo')}
+              rows={2}
               autoComplete="off"
               className={controlStyles}
             />

@@ -122,7 +122,7 @@ Running `ths` with no command starts the default environment.
 | `ths faucet <ADDRESS>` | Send 1 disposable ZEC to a Regtest unified or transparent address |
 | `ths faucet <ADDRESS> --amount 2.5` | Send a custom amount of up to 5 disposable ZEC |
 | `ths deploy faucet --accounts 1,2,3 --amount 3` | Fund development accounts by index instead of address |
-| `ths deploy send --from 1 --to 2 --amount 1` | Move funds between development accounts by index |
+| `ths send --from 1 --to 2 --amount 1 --memo "hi"` | Send between development accounts by index, with an optional Orchard memo |
 | `ths deploy shield --from 1 --amount 0.5` | Move an account's transparent balance into its Orchard balance |
 | `ths deploy unshield --from 1 --amount 0.2` | Move an account's Orchard balance into its transparent balance |
 | `ths logs app -f` | Follow dashboard/server logs |

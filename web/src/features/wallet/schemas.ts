@@ -36,6 +36,18 @@ const amountField = z
     return zatoshi;
   });
 
+/** ZIP-302 memo size; the limit is in UTF-8 bytes, not characters. */
+export const MEMO_MAX_BYTES = 512;
+
+export const memoByteLength = (memo: string) => new TextEncoder().encode(memo).length;
+
+const memoField = z
+  .string()
+  .refine(
+    (memo) => memoByteLength(memo) <= MEMO_MAX_BYTES,
+    `Memos are limited to ${MEMO_MAX_BYTES} bytes.`,
+  );
+
 export const sendSchema = z
   .object({
     from_account: accountIdField,
@@ -43,10 +55,15 @@ export const sendSchema = z
     source_pool: poolField,
     destination_pool: poolField,
     amount: amountField,
+    memo: memoField,
   })
   .refine((values) => values.from_account !== values.to_account, {
     message: 'Pick a different account — sending to yourself only costs the fee.',
     path: ['to_account'],
+  })
+  .refine((values) => values.memo === '' || values.destination_pool === 'orchard', {
+    message: 'Transparent outputs cannot carry a memo. Choose the orchard pool.',
+    path: ['memo'],
   });
 export type SendInput = z.input<typeof sendSchema>;
 export type SendValues = z.output<typeof sendSchema>;

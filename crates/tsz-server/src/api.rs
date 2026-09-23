@@ -21,7 +21,10 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use zcash_keys::address::Address;
-use zcash_protocol::consensus::COINBASE_MATURITY_BLOCKS;
+use zcash_protocol::{
+    consensus::COINBASE_MATURITY_BLOCKS,
+    memo::{Memo, MemoBytes},
+};
 
 use crate::{
     db::{Account, Activity, Store, TREASURY_ACCOUNT_ID, USER_ACCOUNT_COUNT, ZATOSHIS_PER_ZEC},
@@ -360,6 +363,8 @@ struct SendRequest {
     destination_pool: String,
     amount_zatoshi: u64,
     idempotency_key: String,
+    #[serde(default)]
+    memo: Option<String>,
 }
 async fn send(
     State(state): State<AppState>,
@@ -368,6 +373,7 @@ async fn send(
     require_key(&req.idempotency_key)?;
     require_user_account(req.from_account)?;
     require_user_account(req.to_account)?;
+    let memo = parse_memo(req.memo.as_deref(), &req.destination_pool)?;
     if let Some(existing) = state.0.store.activity_for_key(&req.idempotency_key)? {
         return Ok(Json(existing));
     }
@@ -391,6 +397,7 @@ async fn send(
             &req.source_pool,
             &address,
             req.amount_zatoshi,
+            memo,
         )
         .await?;
     let pending = state.0.store.transfer(
@@ -556,6 +563,7 @@ impl FaucetRuntime for AppState {
                 "orchard",
                 destination,
                 amount_zatoshi,
+                None,
             )
             .await
     }
@@ -938,6 +946,18 @@ fn require_key(key: &str) -> ApiResult<()> {
     }
 }
 
+fn parse_memo(memo: Option<&str>, destination_pool: &str) -> ApiResult<Option<MemoBytes>> {
+    let Some(text) = memo.filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+    if destination_pool != "orchard" {
+        return Err(anyhow::Error::new(PaymentError::TransparentMemo).into());
+    }
+    text.parse::<Memo>()
+        .map(|memo| Some(memo.encode()))
+        .map_err(|error| ApiError::bad_request(format!("invalid memo: {error}")))
+}
+
 fn require_user_account(id: u8) -> ApiResult<()> {
     if (1..=USER_ACCOUNT_COUNT).contains(&id) {
         Ok(())
@@ -976,6 +996,7 @@ impl From<anyhow::Error> for ApiError {
         Self {
             status: match error.downcast_ref() {
                 Some(PaymentError::TreasuryExhausted) => StatusCode::SERVICE_UNAVAILABLE,
+                Some(PaymentError::TransparentMemo) => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             message: error.to_string(),
@@ -1173,6 +1194,24 @@ mod tests {
             assert!(require_user_account(id).is_ok());
         }
         assert!(require_user_account(TREASURY_ACCOUNT_ID).is_err());
+    }
+
+    #[test]
+    fn memos_are_optional_shielded_only_and_bounded() {
+        assert!(matches!(parse_memo(None, "orchard"), Ok(None)));
+        assert!(matches!(parse_memo(Some(""), "transparent"), Ok(None)));
+
+        let Ok(Some(memo)) = parse_memo(Some("thanks for lunch"), "orchard") else {
+            panic!("expected an encoded memo");
+        };
+        assert_eq!(&memo.as_slice()[..16], b"thanks for lunch");
+
+        assert!(parse_memo(Some(&"a".repeat(512)), "orchard").is_ok());
+        assert!(parse_memo(Some(&"a".repeat(513)), "orchard").is_err());
+        assert!(matches!(
+            parse_memo(Some("hi"), "transparent"),
+            Err(error) if error.status == StatusCode::BAD_REQUEST
+        ));
     }
 
     #[test]

@@ -70,6 +70,8 @@ enum Command {
         #[arg(long, default_value = "1")]
         amount: ZecAmount,
     },
+    /// Send funds from one development account (1-5) to another.
+    Send(SendArgs),
     /// Fund or move balances across development accounts without the dashboard.
     Deploy {
         #[command(subcommand)]
@@ -114,24 +116,8 @@ enum DeployCommand {
         #[arg(long, value_enum, default_value = "orchard")]
         pool: Pool,
     },
-    /// Send funds from one account to another.
-    Send {
-        /// Source account index (1-5).
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
-        from: u8,
-        /// Destination account index (1-5).
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
-        to: u8,
-        /// Amount of ZEC to send, up to 8 decimal places.
-        #[arg(long)]
-        amount: SendAmount,
-        /// Pool to spend from.
-        #[arg(long = "source-pool", value_enum, default_value = "orchard")]
-        source_pool: Pool,
-        /// Pool the destination account receives into.
-        #[arg(long = "destination-pool", value_enum, default_value = "orchard")]
-        destination_pool: Pool,
-    },
+    /// Send funds from one account to another (same as `ths send`).
+    Send(SendArgs),
     /// Move an account's transparent balance into its shielded (orchard) balance.
     Shield {
         /// Account index to shield from (1-5).
@@ -143,6 +129,9 @@ enum DeployCommand {
         /// Amount of ZEC to shield, up to 8 decimal places.
         #[arg(long)]
         amount: SendAmount,
+        /// Text memo for the recipient (up to 512 bytes).
+        #[arg(long, value_parser = parse_memo)]
+        memo: Option<String>,
     },
     /// Move an account's shielded (orchard) balance into its transparent balance.
     Unshield {
@@ -156,6 +145,28 @@ enum DeployCommand {
         #[arg(long)]
         amount: SendAmount,
     },
+}
+
+#[derive(clap::Args)]
+struct SendArgs {
+    /// Source account index (1-5).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
+    from: u8,
+    /// Destination account index (1-5).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
+    to: u8,
+    /// Amount of ZEC to send, up to 8 decimal places.
+    #[arg(long)]
+    amount: SendAmount,
+    /// Pool to spend from.
+    #[arg(long = "source-pool", value_enum, default_value = "orchard")]
+    source_pool: Pool,
+    /// Pool the destination account receives into.
+    #[arg(long = "destination-pool", value_enum, default_value = "orchard")]
+    destination_pool: Pool,
+    /// Text memo for the recipient (up to 512 bytes; orchard destinations only).
+    #[arg(long, value_parser = parse_memo)]
+    memo: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -201,6 +212,7 @@ fn main() -> Result<ExitCode> {
         Command::Faucet { address, amount } => {
             runtime.faucet(&cli.name, &address, amount.zatoshi(), cli.json)
         }
+        Command::Send(args) => send(&runtime, &cli.name, args, cli.json),
         Command::Deploy { action } => match action {
             DeployCommand::Faucet {
                 accounts,
@@ -213,28 +225,20 @@ fn main() -> Result<ExitCode> {
                 pool.as_str(),
                 cli.json,
             ),
-            DeployCommand::Send {
+            DeployCommand::Send(args) => send(&runtime, &cli.name, args, cli.json),
+            DeployCommand::Shield {
                 from,
                 to,
                 amount,
-                source_pool,
-                destination_pool,
+                memo,
             } => runtime.deploy_send(
-                &cli.name,
-                from,
-                to,
-                source_pool.as_str(),
-                destination_pool.as_str(),
-                amount.zatoshi(),
-                cli.json,
-            ),
-            DeployCommand::Shield { from, to, amount } => runtime.deploy_send(
                 &cli.name,
                 from,
                 to.unwrap_or(from),
                 Pool::Transparent.as_str(),
                 Pool::Orchard.as_str(),
                 amount.zatoshi(),
+                memo.as_deref(),
                 cli.json,
             ),
             DeployCommand::Unshield { from, to, amount } => runtime.deploy_send(
@@ -244,6 +248,7 @@ fn main() -> Result<ExitCode> {
                 Pool::Orchard.as_str(),
                 Pool::Transparent.as_str(),
                 amount.zatoshi(),
+                None,
                 cli.json,
             ),
         },
@@ -256,11 +261,39 @@ fn main() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn send(runtime: &Runtime, name: &InstanceName, args: SendArgs, json: bool) -> Result<()> {
+    if args.memo.is_some() && args.destination_pool == Pool::Transparent {
+        bail!(
+            "--memo requires --destination-pool orchard; transparent outputs cannot carry a memo"
+        );
+    }
+    runtime.deploy_send(
+        name,
+        args.from,
+        args.to,
+        args.source_pool.as_str(),
+        args.destination_pool.as_str(),
+        args.amount.zatoshi(),
+        args.memo.as_deref(),
+        json,
+    )
+}
+
 fn should_check_for_updates(cli: &Cli) -> bool {
     !cli.json && matches!(cli.command, None | Some(Command::Start { .. }))
 }
 
 fn _assert_pathbuf_send(_: PathBuf) {}
+
+fn parse_memo(value: &str) -> Result<String> {
+    if value.is_empty() {
+        bail!("memo must not be empty");
+    }
+    if value.len() > 512 {
+        bail!("memo is {} bytes; the maximum is 512", value.len());
+    }
+    Ok(value.to_owned())
+}
 
 fn parse_zec_zatoshi(value: &str) -> Result<u64> {
     let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
@@ -414,6 +447,75 @@ mod tests {
 
         let status = Cli::try_parse_from(["ths", "status"]).unwrap();
         assert!(!should_check_for_updates(&status));
+    }
+
+    #[test]
+    fn send_and_shield_accept_bounded_memos() {
+        let cli = Cli::try_parse_from([
+            "ths",
+            "send",
+            "--from",
+            "1",
+            "--to",
+            "2",
+            "--amount",
+            "1.5",
+            "--source-pool",
+            "transparent",
+            "--memo",
+            "hello",
+        ])
+        .unwrap();
+        let Some(Command::Send(args)) = cli.command else {
+            panic!("expected ths send");
+        };
+        assert_eq!((args.from, args.to), (1, 2));
+        assert_eq!(args.amount.zatoshi(), 150_000_000);
+        assert_eq!(args.source_pool, Pool::Transparent);
+        assert_eq!(args.destination_pool, Pool::Orchard);
+        assert_eq!(args.memo.as_deref(), Some("hello"));
+
+        let cli = Cli::try_parse_from([
+            "ths", "deploy", "send", "--from", "1", "--to", "2", "--amount", "1", "--memo", "hello",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Deploy {
+                action: DeployCommand::Send(SendArgs { memo: Some(ref memo), .. })
+            }) if memo == "hello"
+        ));
+
+        assert!(
+            Cli::try_parse_from(["ths", "send", "--from", "1", "--to", "6", "--amount", "1"])
+                .is_err()
+        );
+
+        let cli = Cli::try_parse_from([
+            "ths", "deploy", "shield", "--from", "1", "--amount", "1", "--memo", "hi",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Deploy {
+                action: DeployCommand::Shield { memo: Some(_), .. }
+            })
+        ));
+
+        let too_long = "a".repeat(513);
+        assert!(
+            Cli::try_parse_from([
+                "ths", "deploy", "send", "--from", "1", "--to", "2", "--amount", "1", "--memo",
+                &too_long,
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ths", "deploy", "unshield", "--from", "1", "--amount", "1", "--memo", "x",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

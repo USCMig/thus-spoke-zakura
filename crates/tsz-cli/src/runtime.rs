@@ -341,6 +341,7 @@ impl Runtime {
         source_pool: &str,
         destination_pool: &str,
         amount_zatoshi: u64,
+        memo: Option<&str>,
         json: bool,
     ) -> Result<()> {
         let app_container = format!("{}-app", prefix(name));
@@ -360,6 +361,7 @@ impl Runtime {
                 "destination_pool": destination_pool,
                 "amount_zatoshi": amount_zatoshi,
                 "idempotency_key": idempotency_key,
+                "memo": memo,
             }))
             .send()
             .with_context(|| {
@@ -377,6 +379,9 @@ impl Runtime {
                 activity.to_account,
                 activity.destination_pool
             );
+            if let Some(memo) = memo {
+                println!("Memo: {memo}");
+            }
             println!("Transaction: {}", activity.txid);
             if let Some(block_hash) = &activity.block_hash {
                 println!("Confirmed in: {block_hash}");
