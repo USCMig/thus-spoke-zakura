@@ -55,4 +55,9 @@ describe('sendSchema', () => {
     // Each of these characters is three UTF-8 bytes: 171 * 3 = 513.
     expect(memoIssue({ ...base, memo: '桜'.repeat(171) })).toMatch(/512 bytes/);
   });
+
+  it('refuses a memo ending in NUL', () => {
+    expect(memoIssue({ ...base, memo: 'hi\0' })).toMatch(/NUL/);
+    expect(memoIssue({ ...base, memo: 'a\0b' })).toBeUndefined();
+  });
 });

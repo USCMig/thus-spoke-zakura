@@ -48,7 +48,9 @@ const memoField = z
   .refine(
     (memo) => memoByteLength(memo) <= MEMO_MAX_BYTES,
     `Memos are limited to ${MEMO_MAX_BYTES} bytes.`,
-  );
+  )
+  // Memos are zero-padded, so a trailing NUL would be lost on decode.
+  .refine((memo) => !memo.endsWith('\0'), 'A memo cannot end with a NUL character.');
 
 export const sendSchema = z
   .object({

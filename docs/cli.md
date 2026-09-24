@@ -181,8 +181,8 @@ ths faucet tmExampleTransparentAddress... --amount 2.5
 Sends funds from one development account to another. The transaction is mined
 immediately, and `ths` prints the transaction ID and confirming block.
 
-- `--from <N>` / `--to <N>` (required): account indices, `1`-`5`. The treasury
-  account can't be used.
+- `--from <N>` / `--to <N>` (required): two different account indices,
+  `1`-`5`. The treasury account can't be used.
 - `--amount <ZEC>` (required): limited only by the sending account's balance.
 - `--source-pool <orchard|transparent>`: pool to spend from (default
   `orchard`).
@@ -218,6 +218,10 @@ account's keys can read it.
   `ths deploy unshield` do not.
 - The limit is 512 **bytes**, not characters. Non-ASCII text, such as emoji or
   CJK characters, takes several bytes per character.
+- Leaving out `--memo` sends no memo. `--memo ""` sends an explicit empty
+  text memo.
+- A memo can't end with a NUL (U+0000) character. Memos are padded with zero
+  bytes, so a trailing NUL would be lost when the memo is read.
 - The memo is attached to the recipient's output only. Change returned to the
   sender has no memo.
 - The block explorer shows public transaction data only. It never shows memo
@@ -275,22 +279,23 @@ does exactly the same thing. It's included so a setup script can use
 ths deploy send --from 2 --to 3 --amount 1 --memo "rent for October"
 ```
 
-### `ths deploy shield --from <N> [--to <N>] --amount <ZEC> [--memo <TEXT>]`
+### `ths deploy shield --from <N> --to <N> --amount <ZEC> [--memo <TEXT>]`
 
 Shorthand for `deploy send` with `--source-pool transparent
---destination-pool orchard`: moves an account's unshielded (transparent)
-balance into its shielded (Orchard) balance.
+--destination-pool orchard`: spends one account's transparent balance into
+another account's Orchard balance.
 
-- `--from <N>` (required) — account to shield from.
-- `--to <N>` — account to shield into (default: same as `--from`).
+- `--from <N>` (required): account to spend transparent funds from.
+- `--to <N>` (required): a different account to receive them as Orchard
+  funds. Sends between the same account are rejected.
 - `--amount <ZEC>` (required).
-- `--memo <TEXT>` — optional memo on the shielded output (up to 512 bytes).
+- `--memo <TEXT>`: optional memo on the Orchard output (up to 512 bytes).
 
 ```console
-# Shield 0.5 ZEC of account 4's transparent balance into its own Orchard balance
-ths deploy shield --from 4 --amount 0.5
+# Shield 0.5 ZEC of account 4's transparent balance into account 2's Orchard balance
+ths deploy shield --from 4 --to 2 --amount 0.5
 
-# Shield into a different account's Orchard balance, with a memo
+# The same, with a memo
 ths deploy shield --from 4 --to 2 --amount 0.5 --memo "welcome to the shielded pool"
 ```
 
@@ -299,21 +304,19 @@ ths deploy shield --from 4 --to 2 --amount 0.5 --memo "welcome to the shielded p
 > well — so shielding "0.5 ZEC" from an account holding 1 transparent ZEC can
 > leave that account with slightly less than 0.5 ZEC left over.
 
-### `ths deploy unshield --from <N> [--to <N>] --amount <ZEC>`
+### `ths deploy unshield --from <N> --to <N> --amount <ZEC>`
 
 Shorthand for `deploy send` with `--source-pool orchard --destination-pool
-transparent`: moves an account's shielded (Orchard) balance into its
-unshielded (transparent) balance.
+transparent`: spends one account's Orchard balance into another account's
+transparent balance.
 
-- `--from <N>` (required) — account to unshield from.
-- `--to <N>` — account to unshield into (default: same as `--from`).
+- `--from <N>` (required): account to spend Orchard funds from.
+- `--to <N>` (required): a different account to receive them as transparent
+  funds.
 - `--amount <ZEC>` (required).
 
 ```console
-# Unshield 0.2 ZEC from account 1's own balances
-ths deploy unshield --from 1 --amount 0.2
-
-# Unshield into a different account's transparent balance
+# Unshield 0.2 ZEC from account 1's Orchard balance into account 3's transparent balance
 ths deploy unshield --from 1 --to 3 --amount 0.2
 ```
 
@@ -322,18 +325,18 @@ ths deploy unshield --from 1 --to 3 --amount 0.2
 A typical setup script for a fresh environment might look like:
 
 ```console
-ths --name demo --no-open &
+ths --name demo start --no-open &
 sleep 5   # or poll `ths status --name demo` until it reports "running"
 
 ths --name demo deploy faucet --accounts 1,2,3,4,5 --amount 5
 ths --name demo deploy faucet --accounts 2 --amount 1 --pool transparent
-ths --name demo deploy shield --from 2 --amount 0.5
-ths --name demo deploy send --from 1 --to 3 --amount 1
+ths --name demo deploy shield --from 2 --to 4 --amount 0.5
+ths --name demo deploy send --from 1 --to 3 --amount 1 --memo "welcome"
 ```
 
 This funds all five accounts, gives account 2 some transparent balance,
-shields part of it, and moves shielded funds between accounts 1 and 3 — all
-without opening the dashboard.
+shields part of it into account 4, and sends shielded funds with a memo from
+account 1 to account 3, all without opening the dashboard.
 
 ---
 
@@ -353,8 +356,8 @@ without opening the dashboard.
 | `ths send --from --to --amount [--source-pool] [--destination-pool] [--memo]` | Send between accounts by index, optionally with an Orchard memo |
 | `ths deploy faucet --accounts <LIST> [--amount] [--pool]` | Fund one or more of the five accounts by index |
 | `ths deploy send --from --to --amount [--source-pool] [--destination-pool] [--memo]` | Move funds between accounts/pools by index, optionally with a memo |
-| `ths deploy shield --from [--to] --amount [--memo]` | Move transparent balance into Orchard |
-| `ths deploy unshield --from [--to] --amount` | Move Orchard balance into transparent |
+| `ths deploy shield --from --to --amount [--memo]` | Spend transparent funds into another account's Orchard balance |
+| `ths deploy unshield --from --to --amount` | Spend Orchard funds into another account's transparent balance |
 | `ths logs [service] [-f]` | Stream or print service logs |
 | `ths list` | List known environments |
 | `ths stop` | Stop and delete the environment |

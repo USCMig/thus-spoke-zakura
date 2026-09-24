@@ -123,9 +123,9 @@ enum DeployCommand {
         /// Account index to shield from (1-5).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
         from: u8,
-        /// Account index to shield into (1-5); defaults to --from.
+        /// Account index to shield into (1-5); must differ from --from.
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
-        to: Option<u8>,
+        to: u8,
         /// Amount of ZEC to shield, up to 8 decimal places.
         #[arg(long)]
         amount: SendAmount,
@@ -138,9 +138,9 @@ enum DeployCommand {
         /// Account index to unshield from (1-5).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
         from: u8,
-        /// Account index to unshield into (1-5); defaults to --from.
+        /// Account index to unshield into (1-5); must differ from --from.
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
-        to: Option<u8>,
+        to: u8,
         /// Amount of ZEC to unshield, up to 8 decimal places.
         #[arg(long)]
         amount: SendAmount,
@@ -231,24 +231,30 @@ fn main() -> Result<ExitCode> {
                 to,
                 amount,
                 memo,
-            } => runtime.deploy_send(
+            } => send(
+                &runtime,
                 &cli.name,
-                from,
-                to.unwrap_or(from),
-                Pool::Transparent.as_str(),
-                Pool::Orchard.as_str(),
-                amount.zatoshi(),
-                memo.as_deref(),
+                SendArgs {
+                    from,
+                    to,
+                    amount,
+                    source_pool: Pool::Transparent,
+                    destination_pool: Pool::Orchard,
+                    memo,
+                },
                 cli.json,
             ),
-            DeployCommand::Unshield { from, to, amount } => runtime.deploy_send(
+            DeployCommand::Unshield { from, to, amount } => send(
+                &runtime,
                 &cli.name,
-                from,
-                to.unwrap_or(from),
-                Pool::Orchard.as_str(),
-                Pool::Transparent.as_str(),
-                amount.zatoshi(),
-                None,
+                SendArgs {
+                    from,
+                    to,
+                    amount,
+                    source_pool: Pool::Orchard,
+                    destination_pool: Pool::Transparent,
+                    memo: None,
+                },
                 cli.json,
             ),
         },
@@ -261,12 +267,20 @@ fn main() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn send(runtime: &Runtime, name: &InstanceName, args: SendArgs, json: bool) -> Result<()> {
+fn check_send(args: &SendArgs) -> Result<()> {
+    if args.from == args.to {
+        bail!("--from and --to must be different accounts");
+    }
     if args.memo.is_some() && args.destination_pool == Pool::Transparent {
         bail!(
             "--memo requires --destination-pool orchard; transparent outputs cannot carry a memo"
         );
     }
+    Ok(())
+}
+
+fn send(runtime: &Runtime, name: &InstanceName, args: SendArgs, json: bool) -> Result<()> {
+    check_send(&args)?;
     runtime.deploy_send(
         name,
         args.from,
@@ -285,12 +299,13 @@ fn should_check_for_updates(cli: &Cli) -> bool {
 
 fn _assert_pathbuf_send(_: PathBuf) {}
 
+/// `--memo ""` is allowed and sends an explicit empty text memo.
 fn parse_memo(value: &str) -> Result<String> {
-    if value.is_empty() {
-        bail!("memo must not be empty");
-    }
     if value.len() > 512 {
         bail!("memo is {} bytes; the maximum is 512", value.len());
+    }
+    if value.ends_with('\0') {
+        bail!("memo must not end with a NUL character");
     }
     Ok(value.to_owned())
 }
@@ -492,13 +507,17 @@ mod tests {
         );
 
         let cli = Cli::try_parse_from([
-            "ths", "deploy", "shield", "--from", "1", "--amount", "1", "--memo", "hi",
+            "ths", "deploy", "shield", "--from", "1", "--to", "2", "--amount", "1", "--memo", "hi",
         ])
         .unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Deploy {
-                action: DeployCommand::Shield { memo: Some(_), .. }
+                action: DeployCommand::Shield {
+                    to: 2,
+                    memo: Some(_),
+                    ..
+                }
             })
         ));
 
@@ -512,10 +531,47 @@ mod tests {
         );
         assert!(
             Cli::try_parse_from([
-                "ths", "deploy", "unshield", "--from", "1", "--amount", "1", "--memo", "x",
+                "ths", "deploy", "unshield", "--from", "1", "--to", "2", "--amount", "1", "--memo",
+                "x",
             ])
             .is_err()
         );
+        // Shield and unshield no longer default --to to --from.
+        assert!(
+            Cli::try_parse_from(["ths", "deploy", "shield", "--from", "1", "--amount", "1"])
+                .is_err()
+        );
+    }
+
+    fn send_args(from: u8, to: u8, destination_pool: Pool, memo: Option<&str>) -> SendArgs {
+        SendArgs {
+            from,
+            to,
+            amount: SendAmount(1),
+            source_pool: Pool::Orchard,
+            destination_pool,
+            memo: memo.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn memo_values_follow_the_server_contract() {
+        assert_eq!(parse_memo("").unwrap(), "");
+        assert!(parse_memo(&"a".repeat(512)).is_ok());
+        assert!(parse_memo(&"a".repeat(513)).is_err());
+        assert!(parse_memo(&"🌸".repeat(128)).is_ok());
+        assert!(parse_memo(&"🌸".repeat(129)).is_err());
+        assert!(parse_memo("hi\0").is_err());
+        assert!(parse_memo("a\0b").is_ok());
+    }
+
+    #[test]
+    fn sends_are_checked_before_contacting_the_environment() {
+        assert!(check_send(&send_args(1, 2, Pool::Orchard, Some(""))).is_ok());
+        assert!(check_send(&send_args(1, 2, Pool::Transparent, None)).is_ok());
+        assert!(check_send(&send_args(3, 3, Pool::Orchard, None)).is_err());
+        assert!(check_send(&send_args(1, 2, Pool::Transparent, Some("hi"))).is_err());
+        assert!(check_send(&send_args(1, 2, Pool::Transparent, Some(""))).is_err());
     }
 
     #[test]
