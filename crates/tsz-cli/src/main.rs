@@ -70,12 +70,10 @@ enum Command {
         #[arg(long, default_value = "1")]
         amount: ZecAmount,
     },
-    /// Send funds from one development account (1-5) to another.
-    Send(SendArgs),
-    /// Fund or move balances across development accounts without the dashboard.
-    Deploy {
+    /// Act on the development wallet held by the running ths server.
+    Wallet {
         #[command(subcommand)]
-        action: DeployCommand,
+        action: WalletCommand,
     },
     /// Stream or print service logs.
     Logs {
@@ -98,7 +96,7 @@ enum Command {
 }
 
 #[derive(Subcommand)]
-enum DeployCommand {
+enum WalletCommand {
     /// Send faucet funds from the treasury to one or more accounts.
     Faucet {
         /// Account indices to fund (1-5), e.g. --accounts 1,2,3,5.
@@ -116,9 +114,9 @@ enum DeployCommand {
         #[arg(long, value_enum, default_value = "orchard")]
         pool: Pool,
     },
-    /// Send funds from one account to another (same as `ths send`).
+    /// Send funds from one development account (1-5) to another.
     Send(SendArgs),
-    /// Move an account's transparent balance into its shielded (orchard) balance.
+    /// Spend one account's transparent funds into another account's orchard balance.
     Shield {
         /// Account index to shield from (1-5).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
@@ -133,7 +131,7 @@ enum DeployCommand {
         #[arg(long, value_parser = parse_memo)]
         memo: Option<String>,
     },
-    /// Move an account's shielded (orchard) balance into its transparent balance.
+    /// Spend one account's orchard funds into another account's transparent balance.
     Unshield {
         /// Account index to unshield from (1-5).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=5))]
@@ -212,21 +210,20 @@ fn main() -> Result<ExitCode> {
         Command::Faucet { address, amount } => {
             runtime.faucet(&cli.name, &address, amount.zatoshi(), cli.json)
         }
-        Command::Send(args) => send(&runtime, &cli.name, args, cli.json),
-        Command::Deploy { action } => match action {
-            DeployCommand::Faucet {
+        Command::Wallet { action } => match action {
+            WalletCommand::Faucet {
                 accounts,
                 amount,
                 pool,
-            } => runtime.deploy_faucet(
+            } => runtime.wallet_faucet(
                 &cli.name,
                 &accounts,
                 amount.zatoshi(),
                 pool.as_str(),
                 cli.json,
             ),
-            DeployCommand::Send(args) => send(&runtime, &cli.name, args, cli.json),
-            DeployCommand::Shield {
+            WalletCommand::Send(args) => send(&runtime, &cli.name, args, cli.json),
+            WalletCommand::Shield {
                 from,
                 to,
                 amount,
@@ -244,7 +241,7 @@ fn main() -> Result<ExitCode> {
                 },
                 cli.json,
             ),
-            DeployCommand::Unshield { from, to, amount } => send(
+            WalletCommand::Unshield { from, to, amount } => send(
                 &runtime,
                 &cli.name,
                 SendArgs {
@@ -281,7 +278,7 @@ fn check_send(args: &SendArgs) -> Result<()> {
 
 fn send(runtime: &Runtime, name: &InstanceName, args: SendArgs, json: bool) -> Result<()> {
     check_send(&args)?;
-    runtime.deploy_send(
+    runtime.wallet_send(
         name,
         args.from,
         args.to,
@@ -465,9 +462,10 @@ mod tests {
     }
 
     #[test]
-    fn send_and_shield_accept_bounded_memos() {
+    fn wallet_send_and_shield_accept_bounded_memos() {
         let cli = Cli::try_parse_from([
             "ths",
+            "wallet",
             "send",
             "--from",
             "1",
@@ -481,8 +479,11 @@ mod tests {
             "hello",
         ])
         .unwrap();
-        let Some(Command::Send(args)) = cli.command else {
-            panic!("expected ths send");
+        let Some(Command::Wallet {
+            action: WalletCommand::Send(args),
+        }) = cli.command
+        else {
+            panic!("expected ths wallet send");
         };
         assert_eq!((args.from, args.to), (1, 2));
         assert_eq!(args.amount.zatoshi(), 150_000_000);
@@ -490,30 +491,30 @@ mod tests {
         assert_eq!(args.destination_pool, Pool::Orchard);
         assert_eq!(args.memo.as_deref(), Some("hello"));
 
-        let cli = Cli::try_parse_from([
-            "ths", "deploy", "send", "--from", "1", "--to", "2", "--amount", "1", "--memo", "hello",
-        ])
-        .unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Command::Deploy {
-                action: DeployCommand::Send(SendArgs { memo: Some(ref memo), .. })
-            }) if memo == "hello"
-        ));
-
         assert!(
-            Cli::try_parse_from(["ths", "send", "--from", "1", "--to", "6", "--amount", "1"])
-                .is_err()
+            Cli::try_parse_from([
+                "ths", "wallet", "send", "--from", "1", "--to", "6", "--amount", "1"
+            ])
+            .is_err()
         );
 
+        // Account operations live only under `ths wallet`.
+        for removed in ["send", "deploy"] {
+            assert!(
+                Cli::try_parse_from(["ths", removed, "--from", "1", "--to", "2", "--amount", "1"])
+                    .is_err(),
+                "ths {removed} should not exist"
+            );
+        }
+
         let cli = Cli::try_parse_from([
-            "ths", "deploy", "shield", "--from", "1", "--to", "2", "--amount", "1", "--memo", "hi",
+            "ths", "wallet", "shield", "--from", "1", "--to", "2", "--amount", "1", "--memo", "hi",
         ])
         .unwrap();
         assert!(matches!(
             cli.command,
-            Some(Command::Deploy {
-                action: DeployCommand::Shield {
+            Some(Command::Wallet {
+                action: WalletCommand::Shield {
                     to: 2,
                     memo: Some(_),
                     ..
@@ -524,21 +525,21 @@ mod tests {
         let too_long = "a".repeat(513);
         assert!(
             Cli::try_parse_from([
-                "ths", "deploy", "send", "--from", "1", "--to", "2", "--amount", "1", "--memo",
+                "ths", "wallet", "send", "--from", "1", "--to", "2", "--amount", "1", "--memo",
                 &too_long,
             ])
             .is_err()
         );
         assert!(
             Cli::try_parse_from([
-                "ths", "deploy", "unshield", "--from", "1", "--to", "2", "--amount", "1", "--memo",
+                "ths", "wallet", "unshield", "--from", "1", "--to", "2", "--amount", "1", "--memo",
                 "x",
             ])
             .is_err()
         );
         // Shield and unshield no longer default --to to --from.
         assert!(
-            Cli::try_parse_from(["ths", "deploy", "shield", "--from", "1", "--amount", "1"])
+            Cli::try_parse_from(["ths", "wallet", "shield", "--from", "1", "--amount", "1"])
                 .is_err()
         );
     }

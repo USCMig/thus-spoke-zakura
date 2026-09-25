@@ -264,7 +264,7 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn deploy_faucet(
+    pub fn wallet_faucet(
         &self,
         name: &InstanceName,
         accounts: &[u8],
@@ -284,7 +284,7 @@ impl Runtime {
         let mut failures = Vec::new();
         for &account_id in accounts {
             let idempotency_key =
-                format!("ths-deploy-faucet-{account_id}-{}", uuid::Uuid::new_v4());
+                format!("ths-wallet-faucet-{account_id}-{}", uuid::Uuid::new_v4());
             let outcome = client
                 .post(format!("{dashboard}/api/v1/faucet"))
                 .json(&serde_json::json!({
@@ -333,7 +333,7 @@ impl Runtime {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn deploy_send(
+    pub fn wallet_send(
         &self,
         name: &InstanceName,
         from: u8,
@@ -349,7 +349,7 @@ impl Runtime {
             bail!("environment {name} is not running; start it with `ths --name {name}`");
         }
         let dashboard = self.read_instance(name)?.endpoints.dashboard;
-        let idempotency_key = format!("ths-deploy-send-{}", uuid::Uuid::new_v4());
+        let idempotency_key = format!("ths-wallet-send-{}", uuid::Uuid::new_v4());
         let response = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(300))
             .build()?
